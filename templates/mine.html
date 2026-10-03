@@ -19,8 +19,14 @@
     </ul>
   {% endif %}
   <p class="help">
-    Device handoff:
-    <a href="{{ url_for('mine', sid=sid) }}">open my bookings on this browser</a>
+  Device handoff:
+  <a href="{{ url_for('handoff', token=handoff_token) }}">open my bookings on this browser</a>
+
+  <p>
+      Copy and paste this link into the other browser:
+  </p>
+
+  <code>{{ url_for('handoff', token=handoff_token, _external=True) }}</code>
   </p>
 </section>
 {% endblock %}

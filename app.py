@@ -34,7 +34,7 @@ def login_required(fn):
 def load_user():
     init_db()
     seed()
-    token = request.args.get("sid") or request.cookies.get("hold_session")
+    token = request.cookies.get("hold_session")
     g.user = None
     g.session_token = None
     if not token:
@@ -60,7 +60,8 @@ def persist_session_cookie(response):
         response.set_cookie(
             "hold_session",
             g.session_token,
-            httponly=False,
+        #javascript can read cookies including session cookie if it is kept as false
+            httponly=True, 
             samesite=None,
             path="/",
             max_age=60 * 60 * 24 * 14,
@@ -81,6 +82,25 @@ def create_session(user_id):
     conn.close()
     return token
 
+def create_handoff_token(user_id):
+    token = secrets.token_urlsafe(32)
+    conn = get_db()
+
+    conn.execute(
+        "DELETE FROM handoff_tokens WHERE expires_at <= datetime('now')"
+    )
+
+    conn.execute(
+        """
+        INSERT INTO handoff_tokens (token, user_id, expires_at)
+        VALUES (?, ?, datetime('now', '+5 minutes'))
+        """,
+        (token, user_id),
+    )
+
+    conn.commit()
+    conn.close()
+    return token
 
 @app.get("/health")
 def health():
@@ -224,6 +244,38 @@ def book_slot(slot_id):
     flash("You're on the list. Check My bookings for any note from the TA.")
     return redirect(url_for("mine"))
 
+@app.get("/handoff")
+def handoff():
+    token = request.args.get("token")
+
+    if not token:
+        abort(404)
+
+    conn = get_db()
+    handoff = conn.execute(
+        """
+        SELECT user_id
+        FROM handoff_tokens
+        WHERE token = ?
+          AND expires_at > datetime('now')
+        """,
+        (token,),
+    ).fetchone()
+
+    if not handoff:
+        conn.close()
+        abort(404)
+
+    conn.execute(
+        "DELETE FROM handoff_tokens WHERE token = ?",
+        (token,),
+    )
+    conn.commit()
+    conn.close()
+
+    g.session_token = create_session(handoff["user_id"])
+
+    return redirect(url_for("mine"))
 
 @app.get("/me")
 @login_required
@@ -260,7 +312,8 @@ def mine():
         (current_user()["id"],),
     ).fetchall()
     conn.close()
-    return render_template("mine.html", bookings=bookings, sid=g.session_token)
+    handoff_token = create_handoff_token(current_user()["id"])
+    return render_template("mine.html",bookings=bookings,handoff_token=handoff_token,)
 
 
 @app.get("/bookings/<int:booking_id>")
